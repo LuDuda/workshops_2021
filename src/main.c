@@ -5,9 +5,12 @@
  */
 
 #include <zephyr.h>
-#include <sys/printk.h>
+#include <logging/log.h>
+
+LOG_MODULE_REGISTER(APP);
 
 void main(void)
 {
-	printk("Hello World! %s\n", CONFIG_BOARD);
+	LOG_INF("Hello World!\n");
+	LOG_DBG("Board: %s\n", CONFIG_BOARD);
 }
