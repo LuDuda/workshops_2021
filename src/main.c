@@ -35,6 +35,8 @@ LOG_MODULE_REGISTER(APP);
 
 static volatile int level = 0;
 
+static struct bt_conn *bt_conn = NULL;
+
 static const struct bt_data ad[] = {
 	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
 	BT_DATA(BT_DATA_NAME_COMPLETE, DEVICE_NAME, sizeof(DEVICE_NAME) - 1),
@@ -44,7 +46,7 @@ static const struct bt_data sd[] = {
 	BT_DATA_BYTES(BT_DATA_UUID128_ALL, BT_UUID_NUS_VAL),
 };
 
-static void update_pwm(void)
+static void update_pwm(bool is_button_triggered)
 {
 	pwm_pin_set_usec(
 		device_get_binding(LED_PWM_DEVICE),
@@ -53,6 +55,15 @@ static void update_pwm(void)
 		1000 * level / PWM_LEVEL_MAX,
 		0
 	);
+
+	if (is_button_triggered) {
+		uint8_t data = '0' + level;
+
+		int err = bt_nus_send(bt_conn, &data, sizeof(data));
+		if (err) {
+			LOG_ERR("Failed to send NUS notification. Error %d", err);
+		}
+	}
 }
 
 static void button_handler(uint32_t button_state, uint32_t has_changed)
@@ -65,7 +76,7 @@ static void button_handler(uint32_t button_state, uint32_t has_changed)
 
 		if (level > 0) {
 			level--;
-			update_pwm();
+			update_pwm(true);
 		}
 	}
 
@@ -75,7 +86,7 @@ static void button_handler(uint32_t button_state, uint32_t has_changed)
 
 		if (level < PWM_LEVEL_MAX) {
 			level++;
-			update_pwm();
+			update_pwm(true);
 		}
 	}
 }
@@ -110,6 +121,8 @@ static void connected(struct bt_conn *conn, uint8_t err)
 	LOG_INF("Bluetooth Low Energy: Connected to %s\n", addr);
 
 	dk_set_led_on(STATUS_LED);
+
+	bt_conn = conn;
 }
 
 static void disconnected(struct bt_conn *conn, uint8_t reason)
@@ -121,6 +134,8 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 	LOG_INF("Bluetooth Low Energy: Disconnected. Reason %d\n", reason);
 
 	dk_set_led_off(STATUS_LED);
+
+	bt_conn = NULL;
 }
 
 static struct bt_conn_cb conn_callbacks = {
@@ -145,13 +160,13 @@ static void on_nus_receive(struct bt_conn *conn, const uint8_t *const data,
 		case '-':
 			if (level > 0) {
 				level--;
-				update_pwm();
+				update_pwm(false);
 			}
 		break;
 		case '+':
 			if (level < PWM_LEVEL_MAX) {
 				level++;
-				update_pwm();
+				update_pwm(false);
 			}
 		break;
 		default:
