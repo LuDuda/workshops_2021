@@ -12,6 +12,7 @@
 
 #include <bluetooth/bluetooth.h>
 #include <bluetooth/gatt.h>
+#include <bluetooth/services/nus.h>
 
 #include <dk_buttons_and_leds.h>
 
@@ -39,6 +40,21 @@ static const struct bt_data ad[] = {
 	BT_DATA(BT_DATA_NAME_COMPLETE, DEVICE_NAME, sizeof(DEVICE_NAME) - 1),
 };
 
+static const struct bt_data sd[] = {
+	BT_DATA_BYTES(BT_DATA_UUID128_ALL, BT_UUID_NUS_VAL),
+};
+
+static void update_pwm(void)
+{
+	pwm_pin_set_usec(
+		device_get_binding(LED_PWM_DEVICE),
+		LED_PWM_CHANNEL,
+		1000,
+		1000 * level / PWM_LEVEL_MAX,
+		0
+	);
+}
+
 static void button_handler(uint32_t button_state, uint32_t has_changed)
 {
 	uint32_t button_mask = button_state & has_changed;
@@ -47,25 +63,21 @@ static void button_handler(uint32_t button_state, uint32_t has_changed)
 	{
 		LOG_INF("Button 1 has been pushed.");
 
-		if (level > 0)
+		if (level > 0) {
 			level--;
+			update_pwm();
+		}
 	}
 
 	if (button_mask & DK_BTN2_MSK)
 	{
 		LOG_INF("Button 2 has been pushed.");
 
-		if (level < PWM_LEVEL_MAX)
+		if (level < PWM_LEVEL_MAX) {
 			level++;
+			update_pwm();
+		}
 	}
-
-	pwm_pin_set_usec(
-		device_get_binding(LED_PWM_DEVICE),
-		LED_PWM_CHANNEL,
-		1000,
-		1000 * level / PWM_LEVEL_MAX,
-		0
-	);
 }
 
 static void init_leds(void)
@@ -116,19 +128,69 @@ static struct bt_conn_cb conn_callbacks = {
 	.disconnected = disconnected,
 };
 
+static void on_nus_receive(struct bt_conn *conn, const uint8_t *const data,
+						   uint16_t len)
+{
+	char addr[BT_ADDR_LE_STR_LEN] = {0};
+	char command;
+
+	bt_addr_le_to_str(bt_conn_get_dst(conn), addr, ARRAY_SIZE(addr));
+
+	LOG_INF("Received data from: %s, length: %d.", addr, len);
+
+	if (len) {
+		command = data[0];
+
+		switch (command) {
+		case '-':
+			if (level > 0) {
+				level--;
+				update_pwm();
+			}
+		break;
+		case '+':
+			if (level < PWM_LEVEL_MAX) {
+				level++;
+				update_pwm();
+			}
+		break;
+		default:
+			LOG_ERR("Unknown character received - %c.", command);
+			break;
+		}
+	}
+}
+
+static struct bt_nus_cb nus_cb = {
+	.received = on_nus_receive,
+};
+
+static void on_ble_init(int err)
+{
+	if (err) {
+		LOG_ERR("Failed to initialize BLE module. Error %d\n", err);
+		return;
+	}
+
+	err = bt_nus_init(&nus_cb);
+	if (err) {
+		printk("Failed to initialize BLE NUS service. Error %d)", err);
+	}
+}
+
 static void init_ble(void)
 {
 	int err;
 
 	bt_conn_cb_register(&conn_callbacks);
 
-	err = bt_enable(NULL);
+	err = bt_enable(on_ble_init);
 	if (err) {
 		LOG_ERR("Failed to initialize BLE module. Error %d\n", err);
 		return;
 	}
 
-	err = bt_le_adv_start(BT_LE_ADV_CONN, ad, ARRAY_SIZE(ad), NULL, 0);
+	err = bt_le_adv_start(BT_LE_ADV_CONN, ad, ARRAY_SIZE(ad), sd, ARRAY_SIZE(sd));
 	if (err) {
 		LOG_ERR("Failed to start advertising. Error %d\n", err);
 	}
